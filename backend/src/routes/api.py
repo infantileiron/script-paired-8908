@@ -5,9 +5,12 @@ from sqlalchemy.exc import IntegrityError
 from src.config.database import db
 from src.models.entities import User,Pair,Evaluation,Adoption,Audit
 from src.schemas.business import Login,PairInput,EvaluationInput,AdoptionInput
+from src.schemas.sampling import SamplingPlanInput,ObservationInput
 from src.middlewares.auth import current,editor,admin
 from src.utils.security import verify,token
 from src.services.business import audit,dump
+from src.services.sampling import SamplingError
+from src.services import sampling_plans as plans
 from src.controllers.business import ensure_evaluation
 router=APIRouter()
 @router.post('/auth/login')
@@ -63,3 +66,38 @@ def approve(i:int,u=Depends(admin),s=Depends(db)):
  r.status='approved';s.commit();audit(s,u,'签核意见 '+str(i));return dump(r)
 @router.get('/audits')
 def audits(u=Depends(admin),s=Depends(db)):return [dump(r) for r in s.query(Audit).order_by(Audit.id.desc()).limit(100)]
+
+def _plan_error(exc,status=409):
+ if isinstance(exc,plans.PlanNotFound):raise HTTPException(404,'抽检计划不存在')
+ if isinstance(exc,plans.PlanRejected):raise HTTPException(422,str(exc))
+ raise HTTPException(status,str(exc))
+
+@router.get('/sampling-plans')
+def sampling_plans(u=Depends(current),s=Depends(db)):return plans.plan_list(s)
+@router.post('/sampling-plans')
+def create_sampling_plan(data:SamplingPlanInput,u=Depends(editor),s=Depends(db)):
+ try:plan=plans.create_plan(s,u,data)
+ except SamplingError as exc:raise HTTPException(422,str(exc))
+ return plans.plan_detail(s,plan.id)
+@router.get('/sampling-plans/{i}')
+def sampling_plan(i:int,u=Depends(current),s=Depends(db)):
+ try:return plans.plan_detail(s,i)
+ except plans.PlanNotFound:raise HTTPException(404,'抽检计划不存在')
+@router.post('/sampling-plans/{i}/dispatch')
+def dispatch_sampling_plan(i:int,u=Depends(editor),s=Depends(db)):
+ try:plans.dispatch_plan(s,u,i);return plans.plan_detail(s,i)
+ except (plans.PlanConflict,plans.PlanNotFound) as exc:_plan_error(exc)
+@router.post('/sampling-plans/{i}/observations')
+def backfill_sampling_plan(i:int,data:ObservationInput,code:str,u=Depends(editor),s=Depends(db)):
+ if data.before is None and data.after is None:raise HTTPException(422,'至少提供前测或后测，缺测保留为空，不补零')
+ try:plans.backfill(s,u,i,code,data.before,data.after);return plans.plan_detail(s,i)
+ except (plans.PlanConflict,plans.PlanRejected,plans.PlanNotFound) as exc:_plan_error(exc)
+@router.post('/sampling-plans/{i}/close')
+def close_sampling_plan(i:int,u=Depends(editor),s=Depends(db)):
+ try:plans.close_plan(s,u,i);return plans.plan_detail(s,i)
+ except (plans.PlanConflict,plans.PlanNotFound) as exc:_plan_error(exc)
+@router.get('/sampling-plans/{i}/export')
+def export_sampling_plan(i:int,u=Depends(current),s=Depends(db)):
+ try:payload=plans.export_payload(s,i)
+ except plans.PlanNotFound:raise HTTPException(404,'抽检计划不存在')
+ return Response(json.dumps(payload,ensure_ascii=False,indent=2),media_type='application/json',headers={'Content-Disposition':f'attachment; filename="sampling-plan-{i}.json"'})

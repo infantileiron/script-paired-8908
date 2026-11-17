@@ -1,1 +1,1 @@
-export const TEAMS=['企业一组','企业二组'];export const DECISIONS=['继续试点','分组采纳','暂缓采纳'];export const STATES=['queued','running','done','failed'];export const ROLES=['admin','analyst','viewer'];
+export const TEAMS=['企业一组','企业二组'];export const DECISIONS=['继续试点','分组采纳','暂缓采纳'];export const STATES=['queued','running','done','failed'];export const ROLES=['admin','analyst','viewer'];export const PLAN_STATES={draft:'待发单',collecting:'收样中',done:'已结案',failed:'结案失败'};
